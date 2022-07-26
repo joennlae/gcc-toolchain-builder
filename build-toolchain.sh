@@ -38,17 +38,18 @@ LANGUAGES="c"
 [ $ENABLE_BRIG ]    && LANGUAGES="${LANGUAGES},brig"
 [ $ENABLE_JAVA ]    && LANGUAGES="${LANGUAGES},java"
 
+echo "LANGUAGES $LANGUAGES"
+
 GCC_URL="http://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.gz"
 GLIBC_URL="https://ftp.gnu.org/gnu/glibc/glibc-${GLIBC_VERSION}.tar.gz"
 UCLIBC_URL="https://downloads.uclibc-ng.org/releases/${UCLIBC_VERSION}/uClibc-ng-${UCLIBC_VERSION}.tar.xz"
-#NEW_LIB_URL="ftp://sources.redhat.com/pub/newlib/newlib-${NEW_LIB_VERSION}.tar.gz"
 NEW_LIB_URL="ftp://sourceware.org/pub/newlib/newlib-${NEW_LIB_VERSION}.tar.gz"
 GDB_URL="http://ftp.gnu.org/gnu/gdb/gdb-${GDB_VERSION}.tar.gz"
 BIN_UTILS_URL="http://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.bz2"
 MPC_URL="https://ftp.gnu.org/gnu/mpc/mpc-${MPC_VERSION}.tar.gz"
 MPFR_URL="http://www.mpfr.org/mpfr-${MPFR_VERSION}/mpfr-${MPFR_VERSION}.tar.bz2"
-#GMP_URL="ftp://ftp.gmplib.org/pub/gmp-${GMP_VERSION}/gmp-${GMP_VERSION}.tar.bz2"
 GMP_URL="https://gmplib.org/download/gmp/gmp-${GMP_VERSION}.tar.bz2"
+ISL_URL="ftp://gcc.gnu.org/pub/gcc/infrastructure/isl-${ISL_VERSION}.tar.bz2"
 
 if [ -n "$PKG_VERSION" ]
 then
@@ -87,6 +88,18 @@ end()
    exit $1
 }
 
+__abort()
+{
+echo $?
+        cat <<EOF
+***************
+*** ABORTED ***
+***************
+An error occurred. Exiting...
+EOF
+        exit 1
+}
+
 #------------------------------------------------------------------------------
 init_url_list()
 {
@@ -115,6 +128,7 @@ init_url_list()
    [ -n "${MPC_VERSION}" ]      && URL_LIST="$URL_LIST $MPC_URL"
    [ -n "${MPFR_VERSION}" ]     && URL_LIST="$URL_LIST $MPFR_URL"
    [ -n "${GMP_VERSION}" ]      && URL_LIST="$URL_LIST $GMP_URL"
+   [ -n "${ISL_VERSION}" ]      && URL_LIST="$URL_LIST $ISL_URL"
 }
 
 #------------------------------------------------------------------------------
@@ -154,18 +168,18 @@ extract_if_not_already_done()
       dirName=${dirName%[a-z]}
       if [ -d "$dirName" ]
       then
-         [ $VERBOSE ] && echo "INFO: File \"$path_file\" already extrected."
+         [ $VERBOSE ] && echo "INFO: File \"$path_file\" already extracted."
          continue
       fi
 
       if [ -n "$(echo $tar_file | grep ".tar.bz2")" ]
       then
-         tarOption="-xjvf"
+         tarOption="-xf"
       elif [ -n "$(echo $tar_file | grep ".tar.gz")" ]
       then
-         tarOption="-xzvf"
+         tarOption="-xf"
       else
-         echo "ERROR: Compressed fileformat of \"${tar_file}\" not supported!" 1>&2
+         echo "ERROR: Compressed fileformat of \"${tar_file}\" not supported!"
          end 1
       fi
  
@@ -223,6 +237,7 @@ prepare_gcc_build()
    local mpfrLinkList="mpfr"
    local gmpLinkList="gmp"
    local glibcLinkList="glibc"
+   local islLinkList="isl"
    local avrlibcLinkList="avrlibc"
    local avrdudeLinkList="avrdude"
    case ${TARGET} in
@@ -240,6 +255,7 @@ prepare_gcc_build()
    [ -n "${MPC_VERSION}" ]      && linkList ${SOURCE_DIR}/mpc-${MPC_VERSION} "$mpcLinkList"
    [ -n "${MPFR_VERSION}" ]     && linkList ${SOURCE_DIR}/mpfr-${MPFR_VERSION} "$mpfrLinkList"
    [ -n "${NEW_LIB_VERSION}" ]  && linkList ${SOURCE_DIR}/newlib-${NEW_LIB_VERSION} "$newLibLinkList"
+   [ -n "${ISL_VERSION}" ]      && linkList ${SOURCE_DIR}/isl-${ISL_VERSION} "$islLinkList"
 }
 
 #------------------------------------------------------------------------------
@@ -248,6 +264,7 @@ make_first_stage()
    [ $VERBOSE ] && echo "INFO: Entering first stage."
    ${SOURCE_DIR}/gcc-${GCC_VERSION}/configure ${CONFIGURE_ARGS} \
       --enable-languages=c ${CONFIG_TARGET} \
+      --disable-multilib \
       --disable-libssp --disable-libgcc ${ADDITIONAL_FIRST_STAGE_CONFIG_ARGS} \
       2>${ERROR_LOG_FILE}
    [ "$?" != "0" ] && end 1
@@ -267,6 +284,7 @@ make_second_stage()
    [ $VERBOSE ] && echo "INFO: Entering second stage."
    ${SOURCE_DIR}/gcc-${GCC_VERSION}/configure ${CONFIGURE_ARGS} \
       --enable-languages=${LANGUAGES} ${CONFIG_TARGET} \
+      --disable-multilib \
       ${ADDITIONAL_SECOND_STAGE_CONFIG_ARGS} 2>${ERROR_LOG_FILE}
    [ "$?" != "0" ] && end 1
 
@@ -280,7 +298,24 @@ make_second_stage()
 }
 
 #================================= main =======================================
-WORK_DIR=$(pwd)
+
+# Set script to abort on any command that results an error status
+# trap '__abort' 0
+# set -e
+
+check_build_folders()
+{
+  # ensure workspace directories don't already exist
+  for d in  "$WORK_DIR" ; do
+      if [ -d  "$d" ]; then
+          __die "directory already exists - please remove and try again: $d"
+      fi
+  done
+}
+
+WORK_DIR=/var/tmp/$(whoami)/gcc-install
+
+# check_build_folders
 
 #PREFIX="${WORK_DIR}/temp"
 
@@ -294,7 +329,7 @@ fi
 
 if [ ! -n "$MAX_CPU_CORES" ]
 then
-   MAX_CPU_CORES=4
+   MAX_CPU_CORES=`nproc`
 fi
 
 if [ ! -n "$TARGET" ]
